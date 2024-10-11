@@ -471,6 +471,37 @@ impl TxUnshieldingTransfer {
     }
 }
 
+/// Individual hop of some route to take through Osmosis pools.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct OsmosisPoolHop {
+    /// The id of the pool to use on Osmosis.
+    pub pool_id: String,
+    /// The output denomination expected from the
+    /// pool on Osmosis.
+    pub token_out_denom: String,
+}
+
+impl FromStr for OsmosisPoolHop {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        s.split_once(':').map_or_else(
+            || {
+                Err(format!(
+                    "Expected <pool-id>:<output-denom> string, but found \
+                     {s:?} instead"
+                ))
+            },
+            |(pool_id, token_out_denom)| {
+                Ok(OsmosisPoolHop {
+                    pool_id: pool_id.to_owned(),
+                    token_out_denom: token_out_denom.to_owned(),
+                })
+            },
+        )
+    }
+}
+
 /// An token swap on Osmosis
 #[derive(Debug, Clone)]
 pub struct TxOsmosisSwap<C: NamadaTypes = SdkTypes> {
@@ -484,6 +515,8 @@ pub struct TxOsmosisSwap<C: NamadaTypes = SdkTypes> {
     pub slippage_percent: u64,
     /// TODO! Figure out what this is
     pub window_seconds: u64,
+    /// The route to take through Osmosis pools
+    pub route: Option<Vec<OsmosisPoolHop>>,
 }
 
 impl TxOsmosisSwap<SdkTypes> {
@@ -516,19 +549,13 @@ impl TxOsmosisSwap<SdkTypes> {
         }
 
         #[derive(Serialize)]
-        pub struct SwapAmountInRoute {
-            pub pool_id: String,
-            pub token_out_denom: String,
-        }
-
-        #[derive(Serialize)]
         struct OsmosisSwap {
             output_denom: String,
             slippage: Slippage,
             receiver: String,
             next_memo: Option<String>,
             on_failed_delivery: String,
-            route: Option<Vec<SwapAmountInRoute>>,
+            route: Option<Vec<OsmosisPoolHop>>,
         }
 
         #[derive(Serialize)]
@@ -559,6 +586,7 @@ impl TxOsmosisSwap<SdkTypes> {
             recipient,
             slippage_percent,
             window_seconds,
+            route,
         } = self;
 
         let next_memo = transfer.ibc_memo.take().map(|memo| {
@@ -583,7 +611,7 @@ impl TxOsmosisSwap<SdkTypes> {
                         next_memo,
                         receiver: recipient.to_string(),
                         on_failed_delivery: "do_nothing".to_string(),
-                        route: None,
+                        route,
                     },
                 },
             },

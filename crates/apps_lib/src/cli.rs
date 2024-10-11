@@ -1453,7 +1453,7 @@ pub mod cmds {
 
         fn def() -> App {
             App::new(Self::CMD)
-                .about(wrap!("Make a swap of assets on Osmosis."))
+                .about(wrap!("Swap two asset kinds using Osmosis."))
                 .add_args::<args::TxOsmosisSwap<args::CliTypes>>()
         }
     }
@@ -3517,6 +3517,8 @@ pub mod args {
     pub const OUTPUT_DENOM: Arg<String> = arg("output-denom");
     pub const OUTPUT_FOLDER_PATH: ArgOpt<PathBuf> =
         arg_opt("output-folder-path");
+    pub const OSMOSIS_POOL_HOP: ArgMulti<OsmosisPoolHop, GlobStar> =
+        arg_multi("pool-hop");
     pub const OWNER: Arg<WalletAddress> = arg("owner");
     pub const OWNER_OPT: ArgOpt<WalletAddress> = OWNER.opt();
     pub const PATH: Arg<PathBuf> = arg("path");
@@ -3568,7 +3570,7 @@ pub mod args {
     pub const SHIELDED: ArgFlag = flag("shielded");
     pub const SHOW_IBC_TOKENS: ArgFlag = flag("show-ibc-tokens");
     pub const SIGNER: ArgOpt<WalletAddress> = arg_opt("signer");
-    pub const SLIPPAGE: Arg<u64> = arg("slippage-percent");
+    pub const SLIPPAGE: Arg<u64> = arg("slippage-percentage");
     pub const SIGNING_KEYS: ArgMulti<WalletPublicKey, GlobStar> =
         arg_multi("signing-keys");
     pub const SIGNATURES: ArgMulti<PathBuf, GlobStar> = arg_multi("signatures");
@@ -5088,6 +5090,7 @@ pub mod args {
                 recipient,
                 slippage_percent: self.slippage_percent,
                 window_seconds: self.window_seconds,
+                route: self.route,
             })
         }
     }
@@ -5105,35 +5108,48 @@ pub mod args {
                 )
             }
             let window_seconds = WINDOW_SECONDS.parse(matches);
+            let route = match OSMOSIS_POOL_HOP.parse(matches) {
+                r if r.is_empty() => None,
+                r => Some(r),
+            };
             Self {
                 transfer,
                 output_denom,
                 recipient,
                 slippage_percent,
                 window_seconds,
+                route,
             }
         }
 
+        // TODO:
+        // - fix window_seconds help str
+        // - add osmo1... address to recover funds in case of ibc failures
+        //   during packet forwarding
         fn def(app: App) -> App {
             app.add_args::<TxIbcTransfer<CliTypes>>()
-                .arg(
-                    OUTPUT_DENOM.def().help(wrap!(
-                        "The IBC denomination of the desired token"
-                    )),
-                )
+                .arg(OSMOSIS_POOL_HOP.def().help(wrap!(
+                    "Individual hop of the route to take through Osmosis \
+                     pools. This value takes the form \
+                     <osmosis-pool-id>:<pool-output-denom>. When unspecified, \
+                     the optimal route is queried on the fly."
+                )))
+                .arg(OUTPUT_DENOM.def().help(wrap!(
+                    "The IBC denomination (on Osmosis) of the desired asset."
+                )))
                 .arg(TARGET.def().help(wrap!(
-                    "The transparent address to receive the swapped tokens."
+                    "The address that shall receive the swapped tokens."
                 )))
                 .arg(SLIPPAGE.def().help(wrap!(
-                    "The slippage percent as an integer between 0 and 100."
+                    "The slippage percentage as an integer between 0 and 100."
                 )))
                 .arg(WINDOW_SECONDS.def().help(wrap!(
-                    "A mysterious thing that should be set to 10s"
+                    "A mysterious thing that should be set to 10s."
                 )))
                 .mut_arg(RECEIVER.name, |arg| {
                     arg.long("swap-contract").help(wrap!(
                         "The address of the Osmosis contract performing the \
-                         swap. This will be the receiver of the IBC transfer"
+                         swap. It will be the receiver of the IBC transfer."
                     ))
                 })
         }
