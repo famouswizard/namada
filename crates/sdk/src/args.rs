@@ -22,7 +22,7 @@ use namada_ibc::IbcShieldingData;
 use namada_token::masp::utils::RetryStrategy;
 use namada_tx::data::GasLimit;
 use namada_tx::Memo;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer};
 use zeroize::Zeroizing;
 
 use crate::eth_bridge::bridge_pool;
@@ -468,6 +468,129 @@ impl TxUnshieldingTransfer {
         context: &impl Namada,
     ) -> crate::error::Result<(namada_tx::Tx, SigningTxData)> {
         tx::build_unshielding_transfer(context, self).await
+    }
+}
+
+/// An token swap on Osmosis
+#[derive(Debug, Clone)]
+pub struct TxOsmosisSwap<C: NamadaTypes = SdkTypes> {
+    /// The IBC transfer data
+    pub transfer: TxIbcTransfer<C>,
+    /// The token we wish to receive
+    pub output_denom: String,
+    /// Recipient address
+    pub recipient: C::Address,
+    /// Slippage percent
+    pub slippage_percent: u64,
+    /// TODO! Figure out what this is
+    pub window_seconds: u64,
+}
+
+impl TxOsmosisSwap<SdkTypes> {
+    /// Create an IBC transfer from the input arguments
+    pub fn assemble(self) -> TxIbcTransfer<SdkTypes> {
+        #[derive(Serialize)]
+        struct MemoFromNamada {
+            namada: NamadaContext,
+        }
+
+        #[derive(Serialize)]
+        struct NamadaContext {
+            memo: String,
+        }
+
+        #[derive(Serialize)]
+        struct Memo {
+            wasm: Wasm,
+        }
+
+        #[derive(Serialize)]
+        struct Wasm {
+            contract: String,
+            msg: Message,
+        }
+
+        #[derive(Serialize)]
+        struct Message {
+            osmosis_swap: OsmosisSwap,
+        }
+
+        #[derive(Serialize)]
+        pub struct SwapAmountInRoute {
+            pub pool_id: String,
+            pub token_out_denom: String,
+        }
+
+        #[derive(Serialize)]
+        struct OsmosisSwap {
+            output_denom: String,
+            slippage: Slippage,
+            receiver: String,
+            next_memo: Option<String>,
+            on_failed_delivery: String,
+            route: Option<Vec<SwapAmountInRoute>>,
+        }
+
+        #[derive(Serialize)]
+        struct Slippage {
+            twap: Twap,
+        }
+
+        #[derive(Serialize)]
+        struct Twap {
+            #[serde(serialize_with = "serialize_slippage")]
+            slippage_percentage: u64,
+            window_seconds: u64,
+        }
+
+        fn serialize_slippage<S>(
+            val: &u64,
+            serializer: S,
+        ) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+        {
+            serializer.serialize_str(&val.to_string())
+        }
+
+        let Self {
+            mut transfer,
+            output_denom,
+            recipient,
+            slippage_percent,
+            window_seconds,
+        } = self;
+
+        let next_memo = transfer.ibc_memo.take().map(|memo| {
+            serde_json::to_string(&MemoFromNamada {
+                namada: NamadaContext { memo },
+            })
+            .unwrap()
+        });
+
+        let memo = Memo {
+            wasm: Wasm {
+                contract: transfer.receiver.clone(),
+                msg: Message {
+                    osmosis_swap: OsmosisSwap {
+                        output_denom: output_denom.to_string(),
+                        slippage: Slippage {
+                            twap: Twap {
+                                slippage_percentage: slippage_percent,
+                                window_seconds,
+                            },
+                        },
+                        next_memo,
+                        receiver: recipient.to_string(),
+                        on_failed_delivery: "do_nothing".to_string(),
+                        route: None,
+                    },
+                },
+            },
+        };
+
+        transfer.ibc_memo = Some(serde_json::to_string(&memo).unwrap());
+        transfer
     }
 }
 
