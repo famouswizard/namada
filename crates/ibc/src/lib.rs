@@ -24,6 +24,8 @@ mod msg;
 mod nft;
 pub mod parameters;
 pub mod storage;
+#[cfg(test)]
+mod tests;
 pub mod trace;
 pub mod vp;
 

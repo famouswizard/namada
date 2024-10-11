@@ -371,7 +371,7 @@ macro_rules! impl_storage_write {
                     .write_log_mut()
                     .write(key, val.as_ref().to_vec())
                     .into_storage_result()?;
-                self.charge_gas(gas).into_storage_result()?;
+                StateRead::charge_gas(self, gas).into_storage_result()?;
                 Ok(())
             }
 
@@ -380,7 +380,7 @@ macro_rules! impl_storage_write {
                     .write_log_mut()
                     .delete(key)
                     .into_storage_result()?;
-                self.charge_gas(gas).into_storage_result()?;
+                StateRead::charge_gas(self, gas).into_storage_result()?;
                 Ok(())
             }
         }
