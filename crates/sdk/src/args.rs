@@ -553,8 +553,10 @@ impl TxOsmosisSwap<SdkTypes> {
             output_denom: String,
             slippage: Slippage,
             receiver: String,
+            #[serde(skip_serializing_if = "Option::is_none")]
             next_memo: Option<String>,
             on_failed_delivery: String,
+            #[serde(skip_serializing_if = "Option::is_none")]
             route: Option<Vec<OsmosisPoolHop>>,
         }
 
