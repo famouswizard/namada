@@ -39,9 +39,11 @@ use prost::Message;
 use setup::constants::*;
 use sha2::{Digest, Sha256};
 
+use super::helpers::check_balance;
 use crate::e2e::helpers::{
     epoch_sleep, epochs_per_year_from_min_duration, find_address,
     find_gaia_address, get_actor_rpc, get_epoch, get_gaia_gov_address,
+    shielded_sync,
 };
 use crate::e2e::ledger_tests::{
     start_namada_ledger_node_wait_wasm, write_json_file,
@@ -90,7 +92,8 @@ fn ibc_transfers() -> Result<()> {
                 .default_per_epoch_throughput_limit = Amount::max_signed();
             setup::set_validators(1, genesis, base_dir, |_| 0, vec![])
         };
-    let (ledger, gaia, test, test_gaia) = run_namada_gaia(update_genesis)?;
+    let (ledger, gaia, test, test_gaia) =
+        run_namada_gaia(update_genesis, None)?;
     let _bg_ledger = ledger.background();
     let _bg_gaia = gaia.background();
 
@@ -457,7 +460,8 @@ fn pgf_over_ibc() -> Result<()> {
                 .default_per_epoch_throughput_limit = Amount::max_signed();
             setup::set_validators(1, genesis, base_dir, |_| 0, vec![])
         };
-    let (ledger, gaia, test, test_gaia) = run_namada_gaia(update_genesis)?;
+    let (ledger, gaia, test, test_gaia) =
+        run_namada_gaia(update_genesis, None)?;
     let _bg_ledger = ledger.background();
     let _bg_gaia = gaia.background();
 
@@ -549,7 +553,8 @@ fn fee_payment_with_ibc_token() -> Result<()> {
             genesis.parameters.parameters.gas_scale = 10_000_000;
             setup::set_validators(1, genesis, base_dir, |_| 0, vec![])
         };
-    let (ledger, gaia, test, test_gaia) = run_namada_gaia(update_genesis)?;
+    let (ledger, gaia, test, test_gaia) =
+        run_namada_gaia(update_genesis, None)?;
     let _bg_ledger = ledger.background();
     let _bg_gaia = gaia.background();
 
@@ -650,7 +655,8 @@ fn ibc_token_inflation() -> Result<()> {
                 .default_per_epoch_throughput_limit = Amount::max_signed();
             setup::set_validators(1, genesis, base_dir, |_| 0, vec![])
         };
-    let (ledger, gaia, test, test_gaia) = run_namada_gaia(update_genesis)?;
+    let (ledger, gaia, test, test_gaia) =
+        run_namada_gaia(update_genesis, None)?;
     let _bg_ledger = ledger.background();
     let _bg_gaia = gaia.background();
 
@@ -735,7 +741,8 @@ fn ibc_upgrade_client() -> Result<()> {
                 epochs_per_year_from_min_duration(1800);
             setup::set_validators(1, genesis, base_dir, |_| 0, vec![])
         };
-    let (ledger, gaia, test, test_gaia) = run_namada_gaia(update_genesis)?;
+    let (ledger, gaia, test, test_gaia) =
+        run_namada_gaia(update_genesis, None)?;
     let _bg_ledger = ledger.background();
     let _bg_gaia = gaia.background();
 
@@ -798,7 +805,8 @@ fn ibc_rate_limit() -> Result<()> {
             .default_per_epoch_throughput_limit = Amount::from_u64(1_000_000);
         setup::set_validators(1, genesis, base_dir, |_| 0, vec![])
     };
-    let (ledger, gaia, test, test_gaia) = run_namada_gaia(update_genesis)?;
+    let (ledger, gaia, test, test_gaia) =
+        run_namada_gaia(update_genesis, None)?;
     let _bg_ledger = ledger.background();
     let _bg_gaia = gaia.background();
 
@@ -913,11 +921,12 @@ fn ibc_rate_limit() -> Result<()> {
     Ok(())
 }
 
-fn run_namada_gaia(
+pub fn run_namada_gaia(
     mut update_genesis: impl FnMut(
         templates::All<templates::Unvalidated>,
         &Path,
     ) -> templates::All<templates::Unvalidated>,
+    gaia_user_balance: Option<u64>,
 ) -> Result<(NamadaCmd, NamadaCmd, Test, Test)> {
     let test = setup::network(&mut update_genesis, None)?;
 
@@ -932,14 +941,14 @@ fn run_namada_gaia(
     let ledger = start_namada_ledger_node_wait_wasm(&test, Some(0), Some(40))?;
 
     // gaia
-    let test_gaia = setup_gaia()?;
+    let test_gaia = setup_gaia(gaia_user_balance)?;
     let gaia = run_gaia(&test_gaia)?;
     sleep(5);
 
     Ok((ledger, gaia, test, test_gaia))
 }
 
-fn create_channel_with_hermes(
+pub fn create_channel_with_hermes(
     test_a: &Test,
     test_b: &Test,
 ) -> Result<(ChannelId, ChannelId)> {
@@ -980,7 +989,7 @@ fn get_channel_ids_from_hermes_output(
     Ok((channel_id_a, channel_id_b))
 }
 
-fn run_hermes(test: &Test) -> Result<NamadaCmd> {
+pub fn run_hermes(test: &Test) -> Result<NamadaCmd> {
     let args = ["start"];
     let mut hermes = run_hermes_cmd(test, args, Some(40))?;
     hermes.exp_string("Hermes has started")?;
@@ -1005,7 +1014,7 @@ fn run_gaia(test: &Test) -> Result<NamadaCmd> {
     Ok(gaia)
 }
 
-fn wait_for_packet_relay(
+pub fn wait_for_packet_relay(
     port_id: &PortId,
     channel_id: &ChannelId,
     test: &Test,
@@ -1590,7 +1599,7 @@ fn submit_votes(test: &Test) -> Result<()> {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn transfer_from_gaia(
+pub fn transfer_from_gaia(
     test: &Test,
     sender: impl AsRef<str>,
     receiver: impl AsRef<str>,
@@ -1691,35 +1700,6 @@ fn query_height(test: &Test) -> Result<Height> {
     Ok(Height::new(0, status.sync_info.latest_block_height.into()).unwrap())
 }
 
-fn check_balance(
-    test: &Test,
-    owner: impl AsRef<str>,
-    token: impl AsRef<str>,
-    expected_amount: u64,
-) -> Result<()> {
-    let rpc = get_actor_rpc(test, Who::Validator(0));
-
-    if owner.as_ref().starts_with("zvk") {
-        shielded_sync(test, owner.as_ref())?;
-    }
-
-    let query_args = vec![
-        "balance",
-        "--owner",
-        owner.as_ref(),
-        "--token",
-        token.as_ref(),
-        "--node",
-        &rpc,
-    ];
-    let mut client = run!(test, Bin::Client, query_args, Some(40))?;
-    let expected =
-        format!("{}: {expected_amount}", token.as_ref().to_lowercase());
-    client.exp_string(&expected)?;
-    client.assert_success();
-    Ok(())
-}
-
 fn get_gaia_denom_hash(denom: impl AsRef<str>) -> String {
     let mut hasher = Sha256::new();
     hasher.update(denom.as_ref());
@@ -1727,7 +1707,7 @@ fn get_gaia_denom_hash(denom: impl AsRef<str>) -> String {
     format!("ibc/{hash:X}")
 }
 
-fn check_gaia_balance(
+pub fn check_gaia_balance(
     test: &Test,
     owner: impl AsRef<str>,
     denom: impl AsRef<str>,
@@ -1780,23 +1760,9 @@ fn check_inflated_balance(
     Ok(())
 }
 
-fn shielded_sync(test: &Test, viewing_key: impl AsRef<str>) -> Result<()> {
-    let rpc = get_actor_rpc(test, Who::Validator(0));
-    let tx_args = vec![
-        "shielded-sync",
-        "--viewing-keys",
-        viewing_key.as_ref(),
-        "--node",
-        &rpc,
-    ];
-    let mut client = run!(test, Bin::Client, tx_args, Some(120))?;
-    client.assert_success();
-    Ok(())
-}
-
 /// Get IBC shielding data for the following IBC transfer from the destination
 /// chain
-fn gen_ibc_shielding_data(
+pub fn gen_ibc_shielding_data(
     dst_test: &Test,
     receiver: impl AsRef<str>,
     token: impl AsRef<str>,

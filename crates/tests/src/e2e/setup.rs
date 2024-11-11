@@ -1339,7 +1339,7 @@ where
     Ok(cmd_process)
 }
 
-pub fn setup_gaia() -> Result<Test> {
+pub fn setup_gaia(user_balance: Option<u64>) -> Result<Test> {
     let working_dir = working_dir();
     let test_dir = TestDir::new();
     let gaia_dir = test_dir.as_ref().join(constants::GAIA_CHAIN_ID);
@@ -1389,12 +1389,10 @@ pub fn setup_gaia() -> Result<Test> {
 
     // Add tokens to a user account
     let account = find_gaia_address(&test, constants::GAIA_USER)?;
-    let args = [
-        "genesis",
-        "add-genesis-account",
-        &account,
-        "100000000stake,1000samoleans",
-    ];
+    let gaia_user_balance = user_balance.unwrap_or(1000);
+    let genesis_balance =
+        format!("100000000stake,{gaia_user_balance}samoleans");
+    let args = ["genesis", "add-genesis-account", &account, &genesis_balance];
     let mut gaia = run_gaia_cmd(&test, args, Some(10))?;
     gaia.assert_success();
 
