@@ -34,6 +34,7 @@ use namada_core::token::NATIVE_MAX_DECIMAL_PLACES;
 use namada_sdk::address::Address;
 use namada_sdk::chain::{ChainIdPrefix, Epoch};
 use namada_sdk::dec::Dec;
+use namada_sdk::governance::cli::onchain::StewardsUpdate;
 use namada_sdk::ibc::core::host::types::identifiers::PortId;
 use namada_sdk::ibc::trace::ibc_token;
 use namada_sdk::time::DateTimeUtc;
@@ -2823,8 +2824,9 @@ fn test_genesis_manipulation() -> Result<()> {
 
 #[test]
 fn test_mainnet_phases() -> Result<()> {
-    // Use 1 PGF steward
-    let steward = defaults::albert_address();
+    // Use minimum offsets for faster proposals
+    const VOTING_END_OFFSET: u64 = 1;
+    const ACTIVATION_OFFSET: u64 = 1;
 
     let (ledger, gaia, test, test_gaia) = ibc_tests::run_namada_gaia(
         |genesis, base_dir| {
@@ -2848,8 +2850,7 @@ fn test_mainnet_phases() -> Result<()> {
             genesis.parameters.pgf_params.stewards_inflation_rate = Dec::zero();
             genesis.parameters.pgf_params.pgf_inflation_rate = Dec::zero();
 
-            genesis.parameters.pgf_params.stewards =
-                BTreeSet::from_iter([steward.clone()]);
+            genesis.parameters.pgf_params.stewards = BTreeSet::default();
 
             // Disabled until Phase 4: shielding rewards
             genesis.tokens.token.retain(|alias, config| {
@@ -2892,11 +2893,60 @@ fn test_mainnet_phases() -> Result<()> {
     let validator_one_rpc = get_actor_rpc(&test, Who::Validator(0));
 
     let mut proposal_id: u64 = 0;
-    let mut submit_proposal = |tx: TestWasms| -> Result<Epoch> {
-        // Use minimum offsets for faster proposals
-        const VOTING_END_OFFSET: u64 = 1;
-        const ACTIVATION_OFFSET: u64 = 1;
 
+    // Submit and activate a proposal to have 1 PGF steward
+    {
+        let steward = defaults::albert_address();
+        let pgf_stewards = StewardsUpdate {
+            add: Some(steward.clone()),
+            remove: vec![],
+        };
+        let next_epoch = get_epoch(&test, &validator_one_rpc)?.next();
+        let valid_proposal_json_path = prepare_proposal_data(
+            test.test_dir.path(),
+            defaults::albert_address(),
+            pgf_stewards,
+            next_epoch.0,
+            Some(VOTING_END_OFFSET),
+            Some(ACTIVATION_OFFSET),
+        );
+        let submit_proposal_args = apply_use_device(vec![
+            "init-proposal",
+            "--pgf-stewards",
+            "--data-path",
+            valid_proposal_json_path.to_str().unwrap(),
+            "--ledger-address",
+            &validator_one_rpc,
+        ]);
+        let mut client =
+            run!(test, Bin::Client, submit_proposal_args, Some(40))?;
+        client.exp_string(TX_APPLIED_SUCCESS)?;
+        client.assert_success();
+
+        // Start the voting epoch
+        let proposal_id_str = proposal_id.to_string();
+        let _epoch = epoch_sleep(&test, &validator_one_rpc, 120)?;
+        let submit_proposal_vote = apply_use_device(vec![
+            "vote-proposal",
+            "--proposal-id",
+            &proposal_id_str,
+            "--vote",
+            "yay",
+            "--address",
+            "validator-0",
+            "--node",
+            &validator_one_rpc,
+        ]);
+
+        let mut client =
+            run!(test, Bin::Client, submit_proposal_vote, Some(40))?;
+        client.exp_string(TX_APPLIED_SUCCESS)?;
+        client.assert_success();
+
+        proposal_id += 1;
+    }
+
+    let mut submit_proposal = |tx: TestWasms| -> Result<Epoch> {
         let next_epoch = get_epoch(&test, &validator_one_rpc)?.next();
         let activation_epoch =
             next_epoch + VOTING_END_OFFSET + ACTIVATION_OFFSET;
