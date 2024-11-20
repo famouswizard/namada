@@ -33,5 +33,5 @@
     "e2e::ledger_tests::masp_txs_and_queries": 82,
     "e2e::ledger_tests::test_genesis_chain_id_change": 35,
     "e2e::ledger_tests::test_genesis_manipulation": 103,
-    "e2e::ledger_tests::test_mainnet_phases": 1057
+    "e2e::ledger_tests::test_mainnet_phases": 1706
 }

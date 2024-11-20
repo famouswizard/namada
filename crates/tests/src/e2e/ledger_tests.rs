@@ -3000,6 +3000,107 @@ fn test_mainnet_phases() -> Result<()> {
         Ok(activation_epoch)
     };
 
+    let namada_ibc_receiver = find_address(&test, ALBERT)?.to_string();
+    let ibc_denom_on_namada =
+        format!("{port_id_namada}/{channel_id_namada}/{GAIA_COIN}");
+    let gaia_token = ibc_token(&ibc_denom_on_namada).to_string();
+
+    // IBC transfers shouldn't be allowed before phase 3
+    ibc_tests::transfer_from_gaia(
+        &test_gaia,
+        GAIA_USER,
+        &namada_ibc_receiver,
+        GAIA_COIN,
+        1,
+        &port_id_gaia,
+        &channel_id_gaia,
+        None,
+        None,
+    )?;
+    let _ = ibc_tests::wait_for_packet_relay(
+        &port_id_gaia,
+        &channel_id_gaia,
+        &test,
+    );
+    // The tokens should NOT have been transferred to transparent address
+    check_balance(&test, ALBERT, &gaia_token, 0)?;
+
+    // Should not be able transfer NAM before phase 5
+    let tx_args = apply_use_device(vec![
+        "transparent-transfer",
+        "--source",
+        BERTHA,
+        "--target",
+        ALBERT,
+        "--token",
+        NAM,
+        "--amount",
+        "1",
+        "--node",
+        &validator_one_rpc,
+    ]);
+    let mut client = run!(test, Bin::Client, tx_args, Some(40))?;
+    client.exp_string(TX_REJECTED)?;
+
+    // Submit a delegation to the first genesis validator
+    let tx_args = apply_use_device(vec![
+        "bond",
+        "--validator",
+        "validator-0",
+        "--source",
+        BERTHA,
+        "--amount",
+        "5000.0",
+        "--signing-keys",
+        BERTHA_KEY,
+        "--node",
+        &validator_one_rpc,
+    ]);
+    let mut client = run!(test, Bin::Client, tx_args, Some(40))?;
+    client.exp_string(TX_APPLIED_SUCCESS)?;
+    client.assert_success();
+
+    let tx_args = apply_use_device(vec![
+        "unbond",
+        "--validator",
+        "validator-0",
+        "--source",
+        BERTHA,
+        "--amount",
+        "1600.",
+        "--signing-keys",
+        BERTHA_KEY,
+        "--node",
+        &validator_one_rpc,
+    ]);
+    let mut client = run!(test, Bin::Client, tx_args, Some(40))?;
+    let expected = "Amount 1600.000000 withdrawable starting from epoch ";
+    let (_unread, matched) = client.exp_regex(&format!("{expected}.*\n"))?;
+    let epoch_raw = matched.trim().split_once(expected).unwrap().1;
+    let delegation_withdrawable_epoch = Epoch::from_str(epoch_raw).unwrap();
+    client.assert_success();
+
+    let mut current_epoch = get_epoch(&test, &validator_one_rpc)?;
+    while current_epoch < delegation_withdrawable_epoch {
+        current_epoch = epoch_sleep(&test, &validator_one_rpc, 120)?;
+    }
+
+    // Submit a withdrawal of the delegation
+    let tx_args = apply_use_device(vec![
+        "withdraw",
+        "--validator",
+        "validator-0",
+        "--source",
+        BERTHA,
+        "--signing-keys",
+        BERTHA_KEY,
+        "--node",
+        &validator_one_rpc,
+    ]);
+    let mut client = run!(test, Bin::Client, tx_args, Some(40))?;
+    client.exp_string(TX_APPLIED_SUCCESS)?;
+    client.assert_success();
+
     // Propose phase 2 - staking party 🥳
     let activation_epoch = submit_proposal(TestWasms::TxProposalPhase2)?;
 
@@ -3038,16 +3139,11 @@ fn test_mainnet_phases() -> Result<()> {
     // Propose phase 3 - shielding party 🥳
     let activation_epoch = submit_proposal(TestWasms::TxProposalPhase3)?;
 
-    let namada_receiver = find_address(&test, ALBERT)?.to_string();
-    let ibc_denom_on_namada =
-        format!("{port_id_namada}/{channel_id_namada}/{GAIA_COIN}");
-    let gaia_token = ibc_token(&ibc_denom_on_namada).to_string();
-
     // IBC transfers shouldn't be allowed before phase 3
     ibc_tests::transfer_from_gaia(
         &test_gaia,
         GAIA_USER,
-        &namada_receiver,
+        &namada_ibc_receiver,
         GAIA_COIN,
         1,
         &port_id_gaia,
@@ -3079,7 +3175,7 @@ fn test_mainnet_phases() -> Result<()> {
     let _ = ibc_tests::wait_for_packet_relay(
         &port_id_gaia,
         &channel_id_gaia,
-        &test_gaia,
+        &test,
     );
 
     // Fetch note for the shielding transfer target
@@ -3104,7 +3200,7 @@ fn test_mainnet_phases() -> Result<()> {
     ibc_tests::transfer_from_gaia(
         &test_gaia,
         GAIA_USER,
-        &namada_receiver,
+        &namada_ibc_receiver,
         GAIA_COIN,
         1,
         &port_id_gaia,
@@ -3113,7 +3209,8 @@ fn test_mainnet_phases() -> Result<()> {
         None,
     )?;
     ibc_tests::wait_for_packet_relay(&port_id_gaia, &channel_id_gaia, &test)?;
-    // The tokens should have been transferred
+
+    // The transparent tokens should have been transferred
     let balance = find_balance(
         &test,
         Who::Validator(0),
@@ -3146,14 +3243,10 @@ fn test_mainnet_phases() -> Result<()> {
         Some(shielding_data_path),
         None,
     )?;
-    ibc_tests::wait_for_packet_relay(
-        &port_id_gaia,
-        &channel_id_gaia,
-        &test_gaia,
-    )?;
+    ibc_tests::wait_for_packet_relay(&port_id_gaia, &channel_id_gaia, &test)?;
 
     shielded_sync(&test, AA_VIEWING_KEY)?;
-    // The tokens should have been transferred
+    // The shielding tokens should have been transferred
     let balance = find_balance(
         &test,
         Who::Validator(0),
@@ -3193,6 +3286,9 @@ fn test_mainnet_phases() -> Result<()> {
 
         current_epoch = epoch_sleep(&test, &validator_one_rpc, 120)?;
     }
+
+    // Make sure we've entered a new MASP epoch before shielding to get rewards
+    epoch_sleep(&test, &validator_one_rpc, 120)?;
 
     // There should be some shielding rewards now
     shielded_sync(&test, AA_VIEWING_KEY)?;
