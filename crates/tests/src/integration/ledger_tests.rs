@@ -1436,10 +1436,8 @@ fn pgf_steward_change_commission() -> Result<()> {
     assert!(
         captured.contains(&format!("- 0.7 to {}", defaults::bertha_address()))
     );
-    assert!(
-        captured
-            .contains(&format!("- 0.05 to {}", defaults::christel_address()))
-    );
+    assert!(captured
+        .contains(&format!("- 0.05 to {}", defaults::christel_address())));
     assert!(captured.contains("Pgf fundings: no fundings are currently set."));
 
     Ok(())
@@ -2540,6 +2538,297 @@ fn wrap_tx_by_elsewho() -> Result<()> {
             ]),
         )
     });
+    assert!(captured.result.is_ok());
+    assert!(captured.contains(TX_APPLIED_SUCCESS));
+
+    // Assert changed balances
+    let captured = CapturedOutput::of(|| {
+        run(
+            &node,
+            Bin::Client,
+            vec!["balance", "--owner", ALBERT, "--token", NAM],
+        )
+    });
+    assert!(captured.contains("nam: 1979999.5\n"));
+
+    let captured = CapturedOutput::of(|| {
+        run(
+            &node,
+            Bin::Client,
+            vec!["balance", "--owner", key_alias, "--token", NAM],
+        )
+    });
+    assert!(captured.result.is_ok());
+    assert!(captured.contains("nam: 0\n"));
+
+    Ok(())
+}
+
+/// Test that a raw transaction can be wrapped and signed by someone else who
+/// can pay for the gas fees for this tx.
+///
+/// 1. Create a new account
+/// 2. Credit the new account with some tokens to reveal its PK and have tiny
+///    amount left
+/// 3. Reveal the PK of the new account
+/// 4. Check that the new account doesn't have sufficient balance to submit a
+///    transfer tx
+/// 5. Dump a raw tx of a transfer from the new account
+/// 6. Sign the raw transaction
+/// 7. Wrap the raw transaction by another account
+/// 8. Offline sign the wrapper
+/// 9. Load the dumped wrapper with the signatures and submit it
+#[test]
+fn offline_wrap_tx_by_elsewho() -> Result<()> {
+    let (node, _services) = setup::setup()?;
+
+    // 1. Create a new account
+    let key_alias = "new-account";
+    let captured = CapturedOutput::of(|| {
+        run(
+            &node,
+            Bin::Wallet,
+            apply_use_device(vec![
+                "gen",
+                "--alias",
+                key_alias,
+                "--unsafe-dont-encrypt",
+            ]),
+        )
+    });
+    assert!(captured.result.is_ok());
+
+    // 2. Credit the new account with some tokens to reveal its PK and have tiny
+    //    amount left
+    let captured = CapturedOutput::of(|| {
+        run(
+            &node,
+            Bin::Client,
+            apply_use_device(vec![
+                "transparent-transfer",
+                "--source",
+                ALBERT,
+                "--target",
+                key_alias,
+                "--token",
+                NAM,
+                "--amount",
+                // transfer enough to cover reveal-pk gas fees (0.5) and to
+                // have only 0.000001 left after
+                "0.500001",
+            ]),
+        )
+    });
+    assert!(captured.result.is_ok());
+    assert!(captured.contains(TX_APPLIED_SUCCESS));
+
+    // 3. Reveal the PK of the new account
+    let captured = CapturedOutput::of(|| {
+        run(
+            &node,
+            Bin::Client,
+            apply_use_device(vec!["reveal-pk", "--public-key", key_alias]),
+        )
+    });
+    assert!(captured.result.is_ok());
+    assert!(captured.contains(TX_APPLIED_SUCCESS));
+
+    // Assert that there's only the smallest possible non-zero amount left
+    let captured = CapturedOutput::of(|| {
+        run(
+            &node,
+            Bin::Client,
+            vec!["balance", "--owner", key_alias, "--token", NAM],
+        )
+    });
+    assert!(captured.result.is_ok());
+    assert!(captured.contains("nam: 0.000001"));
+
+    // 4. Check that the new account doesn't have sufficient balance to submit a
+    //    transfer tx
+    let captured = CapturedOutput::of(|| {
+        run(
+            &node,
+            Bin::Client,
+            apply_use_device(vec![
+                "transparent-transfer",
+                "--source",
+                key_alias,
+                "--target",
+                ALBERT,
+                "--token",
+                NAM,
+                "--amount",
+                "0.000001",
+            ]),
+        )
+    });
+    assert!(captured.result.is_err());
+    assert_matches!(
+        captured
+            .result
+            .unwrap_err()
+            .downcast_ref::<namada_sdk::error::Error>()
+            .unwrap(),
+        namada_sdk::error::Error::Tx(TxSubmitError::BalanceTooLowForFees(
+            _,
+            _,
+            _,
+            _
+        ))
+    );
+
+    // 5. Dump a raw tx of a transfer from the new account
+    let output_folder = node.test_dir.path();
+    let captured = CapturedOutput::of(|| {
+        run(
+            &node,
+            Bin::Client,
+            apply_use_device(vec![
+                "transparent-transfer",
+                "--source",
+                key_alias,
+                "--target",
+                ALBERT,
+                "--token",
+                NAM,
+                "--amount",
+                "0.000001",
+                "--gas-payer",
+                CHRISTEL_KEY,
+                "--dump-tx",
+                "--output-folder-path",
+                &output_folder.to_str().unwrap(),
+            ]),
+        )
+    });
+    assert!(captured.result.is_ok());
+
+    let tx_path_buf = find_files_with_ext(output_folder, "tx")
+        .unwrap()
+        .first()
+        .expect("Offline tx should be found.")
+        .to_owned();
+    let tx = tx_path_buf.to_path_buf().display().to_string();
+    eprintln!("RAW TX: {}", tx); //FIXME: remove
+
+    // 6. Sign the raw transaction
+    let captured = CapturedOutput::of(|| {
+        run(
+            &node,
+            Bin::Client,
+            apply_use_device(vec![
+                "utils",
+                "sign-offline",
+                "--data-path",
+                &tx,
+                "--secret-keys",
+                &key_alias,
+                "--output-folder-path",
+                &output_folder.to_str().unwrap(),
+            ]),
+        )
+    });
+    assert!(captured.result.is_ok());
+
+    let sig_files = find_files_with_ext(output_folder, "sig").unwrap();
+    assert_eq!(sig_files.len(), 1);
+    let offline_sig_path = sig_files.first().unwrap();
+    let offline_sig = offline_sig_path.to_str().unwrap();
+
+    // 7. Wrap the raw transaction by another account and dump the wrapper
+    let captured = CapturedOutput::of(|| {
+        run(
+            &node,
+            Bin::Client,
+            apply_use_device(vec![
+                "tx",
+                "--tx-path",
+                &tx,
+                "--signatures",
+                &offline_sig,
+                "--gas-payer",
+                CHRISTEL_KEY,
+                "--dump-wrapper-tx",
+                "--output-folder-path",
+                &output_folder.to_str().unwrap(),
+            ]),
+        )
+    });
+    assert!(captured.result.is_ok());
+    let wrapper_tx = find_files_with_ext(output_folder, "tx")
+        .unwrap()
+        .into_iter()
+        .find(|wrapper_tx| wrapper_tx != &tx_path_buf)
+        .expect("Offline wrapper tx should be found.")
+        .to_path_buf()
+        .display()
+        .to_string();
+    eprintln!("WRAPPER TX: {}", wrapper_tx); //FIXME: remove
+    let file = std::fs::read(&wrapper_tx).unwrap(); //FIXME: remove
+    eprintln!(
+        "SERIALIZED WRAPPER TX: {:#?}",
+        serde_json::from_slice::<Tx>(&file).unwrap()
+    ); //FIXME: remove
+       //FIXME: the serialized tx does not contain any signature but it should contain the inner signature!
+
+    // 8. Sign the wrapper offline
+    let captured = CapturedOutput::of(|| {
+        run(
+            &node,
+            Bin::Client,
+            apply_use_device(vec![
+                "utils",
+                "sign-offline",
+                "--data-path",
+                &wrapper_tx,
+                //FIXME: technically I don't need to pass this
+                "--secret-keys",
+                &key_alias,
+                "--secret-key",
+                CHRISTEL_KEY,
+                "--output-folder-path",
+                &output_folder.to_str().unwrap(),
+            ]),
+        )
+    });
+    assert!(captured.result.is_ok());
+
+    let sig_files = find_files_with_ext(output_folder, "sig").unwrap();
+    assert_eq!(sig_files.len(), 2);
+    //FIXME: adjust here
+    let offline_wrapper_sig = sig_files
+        .into_iter()
+        .find(|wrapper_sig| wrapper_sig != offline_sig_path)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned();
+    eprintln!("OFFLINE WRAPPER SIG: {}", offline_wrapper_sig); //FIXME: remove
+
+    // 9. Submit the wrapped tx
+    let captured = CapturedOutput::of(|| {
+        run(
+            &node,
+            Bin::Client,
+            apply_use_device(vec![
+                "tx",
+                "--tx-path",
+                &wrapper_tx,
+                //FIXME: technically I don't need to pass these
+                "--signatures",
+                &offline_sig,
+                "--gas-signature",
+                &offline_wrapper_sig,
+                // //FIXME: remove
+                // "--dump-wrapper-tx",
+            ]),
+        )
+    });
+    // //FIXME: remvoe
+    // panic!();
+    //FIXME: invalid wrapper signature
+    eprintln!("RES: {:#?}", captured.result); //FIXME: remove
     assert!(captured.result.is_ok());
     assert!(captured.contains(TX_APPLIED_SUCCESS));
 

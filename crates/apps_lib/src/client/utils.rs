@@ -1124,6 +1124,7 @@ pub async fn sign_offline(
 
             println!("Wrapper signature serialized at {}", signature_path);
         } else {
+            //FIXME: seems like we end up here, why?
             println!(
                 "A gas payer was provided but the transaction is not a \
                  wrapper: skipping the wrapper signature"

@@ -3736,7 +3736,7 @@ pub async fn build_custom(
     };
 
     // Wrap the tx only if it's not already. If the user passed the argument for
-    // the wrapper signatures we also assume the followings:
+    // the wrapper signature we also assume the followings:
     //    1. The tx loaded is of type Wrapper
     //    2. The user also provided the offline signatures for the inner
     //       transaction(s)
@@ -3746,52 +3746,55 @@ pub async fn build_custom(
     //    2. If only the inner sigs were provided we generate a SigningTxData
     //       that will attach them and then sign the wrapper online
     //    3. If the wrapper signature was provided then we also expect the inner
-    //       signature(s) to have been provided, in this case we attach all the
-    //       signatures here and return no SigningTxData
-    let signing_data = if let Some(wrapper_signature) =
-        &tx_args.wrapper_signature
-    {
-        // Attach the provided signatures to the tx without the need to produce
-        // any mroe signatures
-        let signatures = tx_args.signatures.iter().try_fold(
-            vec![],
-            |mut acc, bytes| -> Result<Vec<_>> {
-                let sig = SignatureIndex::try_from_json_bytes(bytes).map_err(
-                    |err| Error::Encode(EncodingError::Serde(err.to_string())),
-                )?;
-                acc.push(sig);
-                Ok(acc)
-            },
-        )?;
-        tx.add_signatures(signatures)
-            .add_section(Section::Authorization(
+    //       signature(s) to have been provided, in this case we attach the wrapper signature here and return no SigningTxData (the inner signatures are expected to be already attached to the transaction)
+    let signing_data =
+        if let Some(wrapper_signature) = &tx_args.wrapper_signature {
+            //FIXME: technicall yif we have a wrapper offlien sig, the inenr sigs should already been embedded in the tx and we SHOULD NOT reattach them!
+            //FIXME: remove
+            // Attach the provided signatures to the tx without the need to produce
+            // any more signatures
+            // let signatures = tx_args.signatures.iter().try_fold(
+            //     vec![],
+            //     |mut acc, bytes| -> Result<Vec<_>> {
+            //         let sig = SignatureIndex::try_from_json_bytes(bytes).map_err(
+            //             |err| Error::Encode(EncodingError::Serde(err.to_string())),
+            //         )?;
+            //         acc.push(sig);
+            //         Ok(acc)
+            //     },
+            // )?;
+            // tx.add_signatures(signatures)
+            // Attach the provided wrapper signature to the tx without the need to produce any more signatures
+            tx.add_section(Section::Authorization(
                 serde_json::from_slice(wrapper_signature).map_err(|err| {
                     Error::Encode(EncodingError::Serde(err.to_string()))
                 })?,
             ));
-        None
-    } else {
-        let default_signer = owner.clone();
-        let fee_amount = validate_fee(context, tx_args).await?;
+            None
+        } else {
+            //FIXME: we enter here when we want to wrap the raw + the raw signatures. It seems like we produce the wrapper but without any signatures attached!
+            //FIXME: yes it seems like we never use the attached signatures
+            let default_signer = owner.clone();
+            let fee_amount = validate_fee(context, tx_args).await?;
 
-        let signing_data = signing::aux_signing_data(
-            context,
-            tx_args,
-            owner.clone(),
-            default_signer,
-            vec![],
-            false,
-        )
-        .await?;
-        prepare_tx(
-            tx_args,
-            &mut tx,
-            fee_amount,
-            signing_data.fee_payer.clone(),
-        )
-        .await?;
-        Some(signing_data)
-    };
+            let signing_data = signing::aux_signing_data(
+                context,
+                tx_args,
+                owner.clone(),
+                default_signer,
+                vec![],
+                false,
+            )
+            .await?;
+            prepare_tx(
+                tx_args,
+                &mut tx,
+                fee_amount,
+                signing_data.fee_payer.clone(),
+            )
+            .await?;
+            Some(signing_data)
+        };
 
     Ok((tx, signing_data))
 }
