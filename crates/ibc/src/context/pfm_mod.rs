@@ -1,7 +1,10 @@
 //! Implementation of Packet Forward Middleware for our IBC modules.
 
+use std::cell::RefCell;
+use std::collections::BTreeSet;
 use std::fmt::{Debug, Formatter};
 use std::marker::PhantomData;
+use std::rc::Rc;
 
 use ibc::apps::transfer::context::TokenTransferExecutionContext;
 use ibc::apps::transfer::handler::send_transfer_execute;
@@ -66,6 +69,22 @@ where
     pub transfer_module: TransferModule<C>,
     #[allow(missing_docs)]
     pub _phantom: PhantomData<Params>,
+}
+
+impl<C, Params> PfmTransferModule<C, Params>
+where
+    C: IbcCommonContext + Debug,
+{
+    /// Create a new [`PfmTransferModule`]
+    pub fn wrap(
+        ctx: Rc<RefCell<C>>,
+        verifiers: Rc<RefCell<BTreeSet<Address>>>,
+    ) -> PacketForwardMiddleware<Self> {
+        PacketForwardMiddleware::next(Self {
+            transfer_module: TransferModule::new(ctx, verifiers),
+            _phantom: Default::default(),
+        })
+    }
 }
 
 impl<C: IbcCommonContext + Debug, Params> Debug
