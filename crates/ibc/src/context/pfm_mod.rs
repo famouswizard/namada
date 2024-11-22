@@ -403,11 +403,9 @@ where
     }
 }
 
-impl<C, Params> ModuleWrapper
-    for PacketForwardMiddleware<PfmTransferModule<C, Params>>
+impl<T> ModuleWrapper for PacketForwardMiddleware<T>
 where
-    C: IbcCommonContext + Debug,
-    Params: namada_systems::parameters::Read<<C as IbcStorageContext>::Storage>,
+    T: Module + PfmContext,
 {
     fn as_module(&self) -> &dyn Module {
         self
