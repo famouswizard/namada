@@ -177,6 +177,86 @@ where
         )
     }
 
+    fn on_chan_open_ack_validate(
+        &self,
+        port_id: &PortId,
+        channel_id: &ChannelId,
+        counterparty_version: &Version,
+    ) -> Result<(), ChannelError> {
+        self.transfer_module.on_chan_open_ack_validate(
+            port_id,
+            channel_id,
+            counterparty_version,
+        )
+    }
+
+    fn on_chan_open_ack_execute(
+        &mut self,
+        port_id: &PortId,
+        channel_id: &ChannelId,
+        counterparty_version: &Version,
+    ) -> Result<ModuleExtras, ChannelError> {
+        self.transfer_module.on_chan_open_ack_execute(
+            port_id,
+            channel_id,
+            counterparty_version,
+        )
+    }
+
+    fn on_chan_open_confirm_validate(
+        &self,
+        port_id: &PortId,
+        channel_id: &ChannelId,
+    ) -> Result<(), ChannelError> {
+        self.transfer_module
+            .on_chan_open_confirm_validate(port_id, channel_id)
+    }
+
+    fn on_chan_open_confirm_execute(
+        &mut self,
+        port_id: &PortId,
+        channel_id: &ChannelId,
+    ) -> Result<ModuleExtras, ChannelError> {
+        self.transfer_module
+            .on_chan_open_confirm_execute(port_id, channel_id)
+    }
+
+    fn on_chan_close_init_validate(
+        &self,
+        port_id: &PortId,
+        channel_id: &ChannelId,
+    ) -> Result<(), ChannelError> {
+        self.transfer_module
+            .on_chan_close_init_validate(port_id, channel_id)
+    }
+
+    fn on_chan_close_init_execute(
+        &mut self,
+        port_id: &PortId,
+        channel_id: &ChannelId,
+    ) -> Result<ModuleExtras, ChannelError> {
+        self.transfer_module
+            .on_chan_close_init_execute(port_id, channel_id)
+    }
+
+    fn on_chan_close_confirm_validate(
+        &self,
+        port_id: &PortId,
+        channel_id: &ChannelId,
+    ) -> Result<(), ChannelError> {
+        self.transfer_module
+            .on_chan_close_confirm_validate(port_id, channel_id)
+    }
+
+    fn on_chan_close_confirm_execute(
+        &mut self,
+        port_id: &PortId,
+        channel_id: &ChannelId,
+    ) -> Result<ModuleExtras, ChannelError> {
+        self.transfer_module
+            .on_chan_close_confirm_execute(port_id, channel_id)
+    }
+
     fn on_recv_packet_execute(
         &mut self,
         packet: &Packet,
@@ -187,27 +267,27 @@ where
 
     fn on_acknowledgement_packet_validate(
         &self,
-        _packet: &Packet,
-        _acknowledgement: &Acknowledgement,
-        _relayer: &Signer,
+        packet: &Packet,
+        acknowledgement: &Acknowledgement,
+        relayer: &Signer,
     ) -> Result<(), PacketError> {
         self.transfer_module.on_acknowledgement_packet_validate(
-            _packet,
-            _acknowledgement,
-            _relayer,
+            packet,
+            acknowledgement,
+            relayer,
         )
     }
 
     fn on_acknowledgement_packet_execute(
         &mut self,
-        _packet: &Packet,
-        _acknowledgement: &Acknowledgement,
-        _relayer: &Signer,
+        packet: &Packet,
+        acknowledgement: &Acknowledgement,
+        relayer: &Signer,
     ) -> (ModuleExtras, Result<(), PacketError>) {
         self.transfer_module.on_acknowledgement_packet_execute(
-            _packet,
-            _acknowledgement,
-            _relayer,
+            packet,
+            acknowledgement,
+            relayer,
         )
     }
 
