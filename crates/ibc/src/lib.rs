@@ -143,6 +143,8 @@ pub enum Error {
     ChainId(IdentifierError),
     #[error("Verifier insertion error: {0}")]
     Verifier(StorageError),
+    #[error("Storage read/write error: {0}")]
+    Storage(StorageError),
     #[error("IBC error: {0}")]
     Other(String),
 }
